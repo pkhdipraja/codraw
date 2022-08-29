@@ -7,7 +7,7 @@ class PATH(object):
     """
     def __init__(self):
         # Datasets path
-        self.CODRAW_JSON_PATH = './data/CoDraw_1_0.json'
+        self.CODRAW_JSON_PATH = '/home/users/pkahardipraja/project/codraw_project/CoDraw/dataset/CoDraw_1_0.json'
 
     def init_path(self):
         self.RESULTS_PATH = './results'

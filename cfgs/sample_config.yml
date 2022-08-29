@@ -1,0 +1,3 @@
+BATCH_SIZE: 32
+OPT: AdamW
+OPT_PARAMS: {betas: '(0.9, 0.98)', eps: '1e-9'}

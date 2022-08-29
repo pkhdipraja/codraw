@@ -3,6 +3,8 @@ import yaml
 import torch
 
 from cfgs.base_cfgs import ExpConfig
+from datasets.datagen import BOWAddUpdateData, custom_collate
+from torch.utils.data import DataLoader
 
 
 def parse_args():
@@ -93,9 +95,43 @@ def main(cfgs):
     run_mode = cfgs.RUN_MODE
 
     if run_mode == 'train':
-        pass # dont forget to use custom collate function
+        
+        data_bowaddupdate_a = BOWAddUpdateData(cfgs, split='a')
+        data_bowaddupdate_b = BOWAddUpdateData(cfgs, split='b')
+
+        # dont forget to use custom collate function
+        dataloader_a = DataLoader(
+            data_bowaddupdate_a, batch_size=cfgs.BATCH_SIZE, shuffle=True,
+            num_workers=cfgs.NUM_WORKERS, pin_memory=cfgs.PIN_MEM,
+            collate_fn=custom_collate
+        )
+
+        dataloader_b = DataLoader(
+            data_bowaddupdate_b, batch_size=cfgs.BATCH_SIZE, shuffle=True,
+            num_workers=cfgs.NUM_WORKERS, pin_memory=cfgs.PIN_MEM,
+            collate_fn=custom_collate
+        )
+
+        print("len_data_a", len(data_bowaddupdate_a))
+        print("len_data_b", len(data_bowaddupdate_b))
+
+        # for idx, sample in enumerate(dataloader_a):
+        #     sample_iter = print(sample)
+        #     break
+        
+        
+        data_bowaddupdate_dev = BOWAddUpdateData(cfgs, split='dev')
+        data_bowaddupdate_test = BOWAddUpdateData(cfgs, split='test')
+
+        print("len_data_dev", len(data_bowaddupdate_dev))
+        print("len_data_test", len(data_bowaddupdate_test))
+
 
         # include logic if resuming training
+        # also func to select device
+        # set model to train mode
+        # possible gradient accumulation?
+        # can use key: 'dev' or 'test' instead of 'a' or 'b' to access other splits
     elif run_mode == 'val':
         pass
     elif run_mode == 'test':
@@ -110,13 +146,13 @@ if __name__ == "__main__":
     args = parse_args()
     args_dict = cfgs.parse_to_dict(args)
 
-    model_cfg_file = './configs/{}.yml'.format(args.MODEL_CONFIG)
+    model_cfg_file = './cfgs/{}.yml'.format(args.MODEL_CONFIG)
     with open(model_cfg_file, 'r') as model_f:
         model_yaml = yaml.safe_load(model_f)
 
     args_dict = {**args_dict, **model_yaml}
 
-    cfgs.add_dict(args_dict)
+    cfgs.add_args(args_dict)
     cfgs.init_path()
     cfgs.setup()
 

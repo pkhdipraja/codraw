@@ -2,12 +2,14 @@ import datasets.abs_render as abs_render
 import utils.abs_util_orig as abs_util_orig
 import json
 import inspect
+import pdb
 
 from pathlib import Path
+from enum import Enum
 from collections import namedtuple
 
 
-DATASET_PATH = Path(__file__).parent / '../CoDraw/dataset/CoDraw_1_0.json'
+DATASET_PATH = Path('../CoDraw/dataset/CoDraw_1_0.json')
 # idx: integer [0-57]
 # subtype: integer [0-34]
 # depth: integer [0-2]
@@ -101,7 +103,7 @@ class AbstractScene(list):
     """
     def __init__(self, string_or_iterable):
         if isinstance(string_or_iterable, str):
-            abs = abs_util_orig(string_or_iterable)
+            abs = abs_util_orig.AbsUtil(string_or_iterable)
             if abs.obj is None:
                 super().__init__()
             else:
@@ -165,6 +167,39 @@ class ObserveTruth(Event):
         return f"{type(self).__name__}()"
 
 
+class ObserveCanvas(Event):
+    def __init__(self, scene):
+        super().__init__(observer=Agent.DRAWER)
+        if not isinstance(scene, AbstractScene):
+            scene = AbstractScene(scene)
+        self.scene = scene
+
+    def __repr__(self):
+        return f"{type(self).__name__}({self.scene})"
+
+
+class SelectClipart(Event):
+    def __init__(self, clipart):
+        super().__init__(actor=Agent.TELLER, observer=None)
+        self.clipart = clipart
+
+    def __repr__(self):
+        return f"{type(self).__name__}(clipart={self.clipart})"
+
+
+class DrawClipart(Event):
+    # Draws or moves a clipart
+    # Since multiple copies of the same clipart are not allowed, duplicate draw
+    # events with the same id will result in the removal of the older instance
+    # of the clipart to make way for the new one.
+    def __init__(self, clipart):
+        super().__init__(actor=Agent.DRAWER, observer=None)
+        self.clipart = clipart
+
+    def __repr__(self):
+        return f"{type(self).__name__}(clipart={self.clipart})"
+
+
 class TellGroup(Event):
     # group because each word is an action
     def __init__(self, msg):
@@ -214,6 +249,32 @@ def events_from_datum_contextual_place_many(datum):
         buffer.append(DrawGroup(added_cliparts))
         buffer.append(ReplyGroup(entry['msg_d']))
 
+    if isinstance(buffer[-1], ObserveTruth):
+        return []
+    return buffer
+
+
+def events_from_datum_place_one(datum):
+    # TODO(nikita): this filtering keeps just over 25% of conversational rounds
+    # What do I need to do to match the 37.6% number in the arxiv paper?
+    # perhaps I should include the cases where a clipart is updated? But that
+    # only seems to bring me up to around 31%
+    buffer = []
+    buffer.append(ObserveTruth(AbstractScene(datum['abs_t'])))
+
+    for entry in datum['dialog']:
+        abs_b = AbstractScene(entry['abs_b'])
+        abs_d = AbstractScene(entry['abs_d'])
+
+        strictly_additive = len(set(abs_b) - set(abs_d)) == 0
+        added_cliparts = set(abs_d) - set(abs_b)
+        if strictly_additive and len(added_cliparts) == 1 and entry['msg_t']:
+            added_clipart = list(added_cliparts)[0]
+            buffer.append(SelectClipart(added_clipart))
+            buffer.append(TellGroup(entry['msg_t']))
+            buffer.append(DrawClipart(added_clipart))
+            buffer.append(ReplyGroup(entry['msg_d']))
+    
     if isinstance(buffer[-1], ObserveTruth):
         return []
     return buffer
@@ -285,3 +346,9 @@ def cached_split_wrapper(fn):
 def get_contextual_place_many(data):
     for datum in data.values():
         yield from events_from_datum_contextual_place_many(datum)
+
+
+@cached_split_wrapper
+def get_place_one(data):
+    for datum in data.values():
+        yield from events_from_datum_place_one(datum)

@@ -75,7 +75,7 @@ class AbsUtil:
             _clipArtZ = int(results[idx]); idx = idx + 1
             _clipArtFlip = int(results[idx]); idx = idx + 1
 
-            if not verbose and (clipArtX == AbsUtil.NOT_USED or clipArtY == AbsUtil.NOT_USED):
+            if not verbose and (_clipArtX == AbsUtil.NOT_USED or _clipArtY == AbsUtil.NOT_USED):
                 continue
 
             v.append(self.getClipArtIdx(_clipArtObjectIdx, _clipArtTypeIdx))
