@@ -1,8 +1,10 @@
 from pathlib import Path
 from PIL import Image
 from binascii import b2a_base64
+from IPython.display import SVG, display
 
-
+# TODO: move path to experiment configs but currently conflicts with Clipart class due to 
+# initialization using __new__
 PNGS_PATH = (Path(__file__).parent / '../../CoDraw/Pngs').resolve()
 EMBED_PNGS_PATH = '../../CoDraw/Pngs'
 DEPTH_SCALE = [1.0, 0.7, 0.49]
@@ -203,3 +205,7 @@ def svg_from_cliparts(cliparts, color=None, label=None, inline_images=True, scal
 
     svg += "</svg>"
     return svg
+
+
+def display_cliparts(cliparts, color=None, label=None, scale=1.0):
+    display(SVG(svg_from_cliparts(cliparts, color, label, scale=scale)))

@@ -82,7 +82,7 @@ def parse_args():
 
     parser.add_argument(
         '--SPLIT', dest='TRAIN_SPLIT',
-        choices=['train', 'train+valid'],
+        choices=['train', 'train+dev'],
         help='set training split',
         type=str
     )
@@ -96,10 +96,62 @@ def main(cfgs):
 
     if run_mode == 'train':
         
+        
+        # Define model
+        # Custom loss is defined within the model itself
+        model_a = None
+        model_b = None
+
+
+        model_a.cuda()
+        model_b.cuda()
+        model_a.train()
+        model_b.train()
+
+        if cfgs.N_GPU > 1:
+            model_a = torch.nn.DataParallel(model_a, device_ids=cfgs.DEVICES)
+            model_b = torch.nn.DataParallel(model_b, device_ids=cfgs.DEVICES)
+
+        if cfgs.RESUME:
+            #TODO: define loading func for both model A and B
+            # print("Resume training")
+            # if cfgs.CKPT_PATH is not None:
+            #     path = cfgs.CKPT_PATH
+            # else:
+            #     path = cfgs.CKPTS_PATH + \
+            #            'ckpt_' + cfgs.CKPT_VERSION + \
+            #            'epoch' + str(cfgs.CKPT_EPOCH) + '.pkl'
+            
+            # # Load model parameters
+            # ckpt = torch.load(path)
+            # model.load_state_dict(ckpt['state_dict'])
+
+            # # Load optimizer parameters
+            # optim = getattr(torch.optim, cfgs.OPT)
+            # optimizer = optim(model.parameters(), lr=cfgs.LR,
+            #                   **cfgs.OPT_PARAMS)
+            # optimizer.load_state_dict(ckpt['optimizer'])
+
+            # start_epoch = cfgs.CKPT_EPOCH
+
+        else:
+            path = None
+
+            optim_a = getattr(torch.optim, cfgs.OPT)
+            optimizer_a = optim(model_a.parameters(), lr=cfgs.LR,
+                              **cfgs.OPT_PARAMS)
+            
+            optim_b = getattr(torch.optim, cfgs.OPT)
+            optimizer_b = optim(model_b.parameters(), lr=cfgs.LR,
+                              **cfgs.OPT_PARAMS)
+
+            start_epoch_a = 0
+            start_epoch_b = 0
+        
+        # Dataloader
         data_bowaddupdate_a = BOWAddUpdateData(cfgs, split='a')
         data_bowaddupdate_b = BOWAddUpdateData(cfgs, split='b')
 
-        # dont forget to use custom collate function
         dataloader_a = DataLoader(
             data_bowaddupdate_a, batch_size=cfgs.BATCH_SIZE, shuffle=True,
             num_workers=cfgs.NUM_WORKERS, pin_memory=cfgs.PIN_MEM,
@@ -112,19 +164,73 @@ def main(cfgs):
             collate_fn=custom_collate
         )
 
-        print("len_data_a", len(data_bowaddupdate_a))
-        print("len_data_b", len(data_bowaddupdate_b))
+        # Train drawer A
+        for epoch in range(start_epoch_a, cfgs.MAX_EPOCH):
+            for step, sample_iter in enumerate(dataloader_a):
+                optimizer_a.zero_grad()
 
-        # for idx, sample in enumerate(dataloader_a):
-        #     sample_iter = print(sample)
-        #     break
+                sample_iter = sample_iter.cuda()
+                loss = model_a(sample_iter)
+                loss.backward()
+
+                if cfgs.GRAD_CLIP > 0.0:
+                    torch.nn.utils.clip_grad_norm_(
+                        model_a.parameters(),
+                        cfgs.GRAD_CLIP
+                    )
+
+                optimizer_a.step()
+            
+            # Evaluate for each epoch
+            #TODO: implement eval for drawer A
         
         
-        data_bowaddupdate_dev = BOWAddUpdateData(cfgs, split='dev')
-        data_bowaddupdate_test = BOWAddUpdateData(cfgs, split='test')
 
-        print("len_data_dev", len(data_bowaddupdate_dev))
-        print("len_data_test", len(data_bowaddupdate_test))
+        # Train drawer B
+        for epoch in range(start_epoch_b, cfgs.MAX_EPOCH):
+            for step, sample_iter in enumerate(dataloader_b):
+                optimizer_b.zero_grad()
+
+                sample_iter = sample_iter.cuda()
+                loss = model_b(sample_iter)
+                loss.backward()
+
+                if cfgs.GRAD_CLIP > 0.0:
+                    torch.nn.utils.clip_grad_norm_(
+                        model_b.parameters(),
+                        cfgs.GRAD_CLIP
+                    )
+
+                optimizer_b.step()
+            
+            # Evaluate for each epoch
+            # TODO: implement eval for drawer B
+
+
+
+        # Save states
+        state_a = {
+            'state_dict': model_a.state_dict(),
+            'optimizer': optimizer_a.state_dict()
+        }
+
+        state_b = {
+            'state_dict': model_b.state_dict(),
+            'optimizer': optimizer_b.state_dict()
+        }
+
+        model_states = {
+            'drawer_a': state_a,
+            'drawer_b': state_b
+        }
+
+        # TODO: Currently does not accommodate saving in the middle of training.
+        torch.save(
+            model_states,
+            cfgs.CKPTS_PATH + 
+            'ckpt_' + cfgs.CKPT_VERSION + 
+            'epoch' + str(cfgs.MAX_EPOCH) + '.pkl'
+        )
 
 
         # include logic if resuming training
@@ -134,6 +240,14 @@ def main(cfgs):
         # can use key: 'dev' or 'test' instead of 'a' or 'b' to access other splits
     elif run_mode == 'val':
         pass
+        
+        # model_a.eval()
+        # model_b.eval()
+        # data_bowaddupdate_dev = BOWAddUpdateData(cfgs, split='dev')
+        # data_bowaddupdate_test = BOWAddUpdateData(cfgs, split='test')
+
+        # print("len_data_dev", len(data_bowaddupdate_dev))
+        # print("len_data_test", len(data_bowaddupdate_test))
     elif run_mode == 'test':
         pass
     else:

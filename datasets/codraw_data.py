@@ -9,7 +9,7 @@ from enum import Enum
 from collections import namedtuple
 
 
-DATASET_PATH = Path('../CoDraw/dataset/CoDraw_1_0.json')
+# DATASET_PATH = Path('../CoDraw/dataset/CoDraw_1_0.json')
 # idx: integer [0-57]
 # subtype: integer [0-34]
 # depth: integer [0-2]
@@ -233,6 +233,17 @@ class ReplyGroup(Event):
         return f"{type(self).__name__}(msg={repr(self.msg)})"
 
 
+class TellerIntention(Event):
+    def __init__(self, drawn=None, undrawn=None, draw_next=None):
+        super().__init__(actor=Agent.TELLER, observer=None)
+        self.drawn = drawn
+        self.undrawn = undrawn
+        self.draw_next = draw_next
+
+    def __repr__(self):
+        return f"{type(self).__name__}(drawn={self.drawn}, undrawn={self.undrawn}, draw_next={self.draw_next})"
+
+
 def events_from_datum_contextual_place_many(datum):
     buffer = []
     buffer.append(ObserveTruth(AbstractScene(datum['abs_t'])))
@@ -280,13 +291,13 @@ def events_from_datum_place_one(datum):
     return buffer
 
 
-def data_for_splits(split_or_splits):
+def data_for_splits(cfgs, split_or_splits):
     if isinstance(split_or_splits, str):
         splits = [split_or_splits]
     else:
         splits = split_or_splits
 
-    data_all = json.loads(DATASET_PATH.read_text())['data']
+    data_all = json.loads(Path(cfgs.CODRAW_JSON_PATH).read_text())['data']
     keys_train = sorted([k for k in data_all.keys() if k.startswith('train')])
     keys_dev = sorted([k for k in data_all.keys() if k.startswith('val')])
     keys_test = sorted([k for k in data_all.keys() if k.startswith('test')])
@@ -320,16 +331,16 @@ def cached_split_wrapper(fn):
     """
     fn.split_to_results = {}
 
-    def deco(split_or_splits):
+    def deco(cfgs, split_or_splits):
         if isinstance(split_or_splits, str):
             splits = [split_or_splits]
         else:
             splits = split_or_splits
 
         uncached_splits = [split for split in splits if split not in fn.split_to_results]
-        uncached_splits_data = data_for_splits(uncached_splits)
+        uncached_splits_data = data_for_splits(cfgs, uncached_splits)
         for split, data in zip(uncached_splits, uncached_splits_data):
-            result = fn(data)
+            result = fn(cfgs, data)
             if inspect.isgenerator(result):
                 result = list(result)
             fn.split_to_results[split] = result
@@ -343,12 +354,12 @@ def cached_split_wrapper(fn):
 
 
 @cached_split_wrapper
-def get_contextual_place_many(data):
+def get_contextual_place_many(cfgs, data):
     for datum in data.values():
         yield from events_from_datum_contextual_place_many(datum)
 
 
 @cached_split_wrapper
-def get_place_one(data):
+def get_place_one(cfgs, data):
     for datum in data.values():
         yield from events_from_datum_place_one(datum)

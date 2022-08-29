@@ -51,6 +51,17 @@ class Datagen(Dataset):
 
     def get_examples(self):
         raise NotImplementedError("Subclasses should override this")
+    
+    def vocabulary_for_split(self, split, event_getter=codraw_data.get_place_one):
+        vocabulary = set()
+
+        it = iter(event_getter(self.cfgs, split))
+        for event in it:
+            if isinstance(event, codraw_data.TellGroup):
+                msg = event.msg
+                vocabulary |= set(msg.split())
+
+        return sorted(vocabulary)
 
     # def collate(self, batch):
     #     raise NotImplementedError("Subclasses should override this")
@@ -106,7 +117,7 @@ class BOWAddUpdateData(Datagen):
     NUM_TAGS_PER_INDEX = 6  # index, subtype, depth, flip, x, y
 
     def init_full(self):
-        self.vocabulary = vocabulary_for_split(self.split, codraw_data.get_contextual_place_many)
+        self.vocabulary = self.vocabulary_for_split(self.split, codraw_data.get_contextual_place_many)
         self.vocabulary_dict = {item: num for num, item in enumerate(self.vocabulary)}
 
         self.calc_derived()
@@ -119,7 +130,7 @@ class BOWAddUpdateData(Datagen):
         return dict(vocabulary=self.vocabulary)
 
     def get_examples(self):
-        it = iter(codraw_data.get_contextual_place_many(self.split))
+        it = iter(codraw_data.get_contextual_place_many(self.cfgs, self.split))
         for event in it:
             if isinstance(event, codraw_data.TellGroup):
                 assert isinstance(event, codraw_data.TellGroup)
@@ -226,6 +237,8 @@ class BOWAddUpdateData(Datagen):
 
                 yield example
 
+
+
     def __len__(self):
         return self.examples.__len__()
 
@@ -233,16 +246,16 @@ class BOWAddUpdateData(Datagen):
         return self.examples[idx]
 
 
-def vocabulary_for_split(split, event_getter=codraw_data.get_place_one):
-    vocabulary = set()
+# def vocabulary_for_split(split, event_getter=codraw_data.get_place_one):
+#     vocabulary = set()
 
-    it = iter(event_getter(split))
-    for event in it:
-        if isinstance(event, codraw_data.TellGroup):
-            msg = event.msg
-            vocabulary |= set(msg.split())
+#     it = iter(event_getter(split))
+#     for event in it:
+#         if isinstance(event, codraw_data.TellGroup):
+#             msg = event.msg
+#             vocabulary |= set(msg.split())
 
-    return sorted(vocabulary)
+#     return sorted(vocabulary)
 
 
 def custom_collate(batch):

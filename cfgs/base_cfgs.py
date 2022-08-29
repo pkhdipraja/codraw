@@ -36,7 +36,7 @@ class ExpConfig(PATH):
 
         # Define data split
         self.SPLIT = {
-            'train': '', 'valid': 'valid', 'test': 'test'
+            'train': '', 'valid': 'dev', 'test': 'test'
         }
 
         # Optimizer
