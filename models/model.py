@@ -67,7 +67,7 @@ class BaseAddOnlyDrawer(Model, nn.Module):
         flat_scores = clipart_scores[:,:,1:].view((-1, dg.NUM_ALL))
 
         (logits_subtype, logits_depth, logits_flip, vals_numerical) = torch.split(flat_scores, [dg.NUM_SUBTYPES, dg.NUM_DEPTH, dg.NUM_FLIP, dg.NUM_NUMERICAL], dim=1)
-        vals_numerical = self.sigmoid_coeff * F.sigmoid(self.vals_coeff * vals_numerical)
+        vals_numerical = self.sigmoid_coeff * torch.sigmoid(self.vals_coeff * vals_numerical)
 
         subtype_losses = F.cross_entropy(logits_subtype, correct_categorical[:,:,0].view((-1,)), reduce=False).view_as(correct_categorical[:,:,0])
         depth_losses = F.cross_entropy(logits_depth, correct_categorical[:,:,1].view((-1,)), reduce=False).view_as(correct_categorical[:,:,1])
@@ -128,7 +128,7 @@ class BaseAddOnlyDrawer(Model, nn.Module):
 
         flat_scores = clipart_scores[:,:,1:].view((-1, dg.NUM_ALL))
         (logits_subtype, logits_depth, logits_flip, vals_numerical) = torch.split(flat_scores, [dg.NUM_SUBTYPES, dg.NUM_DEPTH, dg.NUM_FLIP, dg.NUM_NUMERICAL], dim=1)
-        vals_numerical = self.sigmoid_coeff * F.sigmoid(self.vals_coeff * vals_numerical)
+        vals_numerical = self.sigmoid_coeff * torch.sigmoid(self.vals_coeff * vals_numerical)
         vals_numerical = vals_numerical.cpu().detach().numpy()
 
         clipart_idx_scores = clipart_scores[0,:,0].cpu().detach().numpy()
@@ -145,4 +145,53 @@ class BaseAddOnlyDrawer(Model, nn.Module):
     def get_action_fns(self):
         return [drawer_observe_canvas, self.draw]
     
+
+class LSTMAddOnlyDrawer(BaseAddOnlyDrawer):
+    def init_full(
+        self, d_embeddings=None,
+        d_hidden=None, d_lstm=None,
+        num_lstm_layers=None, pre_lstm_dropout=None,
+        lstm_dropout=None
+    ):
+        self._args = dict(
+            d_embeddings=d_embeddings,
+            d_hidden=d_hidden,
+            d_lstm=d_lstm,
+            num_lstm_layers=num_lstm_layers,
+            pre_lstm_dropout=pre_lstm_dropout,
+            lstm_dropout=lstm_dropout
+        )
+        super().init_full(d_hidden)
+
+        self.d_embeddings = d_embeddings
+        self.word_embs = torch.nn.Embedding(len(self.datagen.vocabulary_dict), d_embeddings)
+        self.pre_lstm_dropout = nn.Dropout(pre_lstm_dropout)
+        self.lstm = nn.LSTM(d_embeddings, d_lstm, bidirectional=True, num_layers=num_lstm_layers, dropout=lstm_dropout)
+        # self.post_lstm_project = nn.Linear(d_lstm * 2 * num_lstm_layers, d_hidden)
+        # self.post_lstm_project = lambda x: x #nn.Linear(d_lstm * 2 * num_lstm_layers, d_hidden)
+        self.post_lstm_project = lambda x: x[:,:d_hidden]
+        # self.to(cuda_if_available)
+    
+    def lang_to_hidden(self, msg_idxs, offsets=None):
+        if offsets is not None:
+            start = offsets.cpu()
+            end = torch.cat([start[1:], torch.tensor([msg_idxs.shape[-1]])])
+            undo_sorting = np.zeros(start.shape[0], dtype=int)
+            undo_sorting[(start - end).numpy().argsort()] = np.arange(start.shape[0], dtype=int)
+            words_packed = nn.utils.rnn.pack_sequence(sorted([msg_idxs[i:j] for i, j in list(zip(start.numpy(), end.numpy()))], key=lambda x: -x.shape[0]))
+        else:
+            words_packed = nn.utils.rnn.pack_sequence([msg_idxs[0,:]])
+            undo_sorting = np.array([0], dtype=int)
+        
+        word_vecs = embedded = nn.utils.rnn.PackedSequence(
+            self.pre_lstm_dropout(self.word_embs(words_packed.data)),
+            words_packed.batch_sizes)
+        
+        _, (h_final, c_final) = self.lstm(word_vecs)
+        sentence_reps = c_final[-2:,:,:].permute(1, 2, 0).contiguous().view(undo_sorting.size, -1)
+        sentence_reps = self.post_lstm_project(sentence_reps)
+
+        if offsets is not None:
+            sentence_reps = sentence_reps[undo_sorting]
+        return sentence_reps
 

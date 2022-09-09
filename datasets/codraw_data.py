@@ -244,6 +244,25 @@ class TellerIntention(Event):
         return f"{type(self).__name__}(drawn={self.drawn}, undrawn={self.undrawn}, draw_next={self.draw_next})"
 
 
+class Peek(Event):
+    def __init__(self):
+        super().__init__(actor=Agent.TELLER, observer=None)
+
+    def __repr__(self):
+        return f"{type(self).__name__}()"
+
+
+class TellerObserveCanvas(Event):
+    def __init__(self, scene):
+        super().__init__(observer=Agent.TELLER)
+        if not isinstance(scene, AbstractScene):
+            scene = AbstractScene(scene)
+        self.scene = scene
+
+    def __repr__(self):
+        return f"{type(self).__name__}({self.scene})"
+
+
 def events_from_datum_contextual_place_many(datum):
     buffer = []
     buffer.append(ObserveTruth(AbstractScene(datum['abs_t'])))
@@ -363,3 +382,54 @@ def get_contextual_place_many(cfgs, data):
 def get_place_one(cfgs, data):
     for datum in data.values():
         yield from events_from_datum_place_one(datum)
+
+
+@cached_split_wrapper
+def get_scenes(cfgs, data):
+    for datum in data.values():
+        yield AbstractScene(datum['abs_t'])
+
+
+@cached_split_wrapper
+def get_scenes_and_scripts(cfgs, data):
+    for datum in data.values():
+        scene = AbstractScene(datum['abs_t'])
+        script = []
+        for entry in datum['dialog']:
+            if entry.get('peeked', False):
+                script.append(Peek())
+                script.append(TellerObserveCanvas(AbstractScene(entry['abs_b'])))
+            if entry['msg_t']:
+                script.append(TellGroup(entry['msg_t']))
+        yield (scene, script)
+
+
+@cached_split_wrapper
+def get_scenes_and_scripts_with_peek(cfgs, data):
+    for datum in data.values():
+        scene = AbstractScene(datum['abs_t'])
+        script = []
+        have_peeked = False
+        for entry in datum['dialog']:
+            if entry.get('peeked', False):
+                script.append(Peek())
+                script.append(TellerObserveCanvas(AbstractScene(entry['abs_b'])))
+                have_peeked = True
+            if entry['msg_t']:
+                script.append(TellGroup(entry['msg_t']))
+
+        # Exclude events with no Peek action, or no messages sent afterwards
+        if have_peeked and not isinstance(script[-1], TellerObserveCanvas):
+            yield (scene, script)
+
+
+@cached_split_wrapper
+def get_truth_and_human_scenes(cfgs, data):
+    for datum in data.values():
+        scene = AbstractScene(datum['abs_t'])
+        scene_after = None
+        for entry in datum['dialog']:
+            scene_after = entry['abs_d']
+        assert scene_after is not None
+        scene_after = AbstractScene(scene_after)
+        yield (scene, scene_after)

@@ -1,8 +1,16 @@
-BATCH_SIZE: 32
-LR: 0.0003
+BATCH_SIZE: 16
+LR: 0.001
 BINARY_DROPOUT: 0.2
 HIDDEN_DROPOUT: 0.4
+EMBEDDING_DIM: 256
+HIDDEN_DIM: 512
+LSTM_DIM: 256
+LAYER_SIZE: 1
+PRELSTM_DROPOUT: 0.4
+LSTM_DROPOUT: 0.0
 GRAD_CLIP: 0.0
-OPT: AdamW
-MAX_EPOCH: 10
-OPT_PARAMS: {betas: '(0.9, 0.98)', eps: '1e-9'}
+OPT: Adam
+MAX_EPOCH: 15
+OPT_PARAMS: {betas: '(0.9, 0.999)', eps: '1e-8'}
+
+# seems the model is trained using default Adam optimizer without any changes?

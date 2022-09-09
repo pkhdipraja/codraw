@@ -10,9 +10,9 @@ class Model(object):
         super().__init__()
         self.cfgs = cfgs
         if spec is not None:
-            assert self.datagen_cls is not None:
+            assert self.datagen_cls is not None
             assert self.datagen_cls.__name__ == spec['datagen_class']
-            self.datagen = self.datagen_cls(spec=spec['datagen_spec'])
+            self.datagen = self.datagen_cls(cfgs, spec=spec['datagen_spec'])
             self.init_from_spec(**{k: v for (k,v) in spec.items() if k not in ['class', 'datagen_spec', 'datagen_class', 'state_dict']})
             # if 'state_dict' in spec:
             #     self.load_state_dict(spec['state_dict'])
@@ -48,8 +48,8 @@ class Model(object):
             'datagen_spec': self.datagen.spec,
             **self.get_spec(),
         }
-        # if hasattr(self, 'state_dict'):
-        #     res['state_dict'] = self.state_dict()
+        if hasattr(self, 'state_dict'):
+            res['state_dict'] = self.state_dict()
         return res
     
     def just_tell(self, clipart, *args, **kwargs):

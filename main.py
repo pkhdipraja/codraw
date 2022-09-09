@@ -1,10 +1,18 @@
 import argparse
 import yaml
 import torch
+import pdb
+import os
+import numpy as np
+import datasets.codraw_data as codraw_data
 
 from cfgs.base_cfgs import ExpConfig
 from datasets.datagen import BOWAddUpdateData, custom_collate
 from torch.utils.data import DataLoader
+from models.model import LSTMAddOnlyDrawer
+from evaluation.eval import make_fns, eval_fns, scripted_tell, \
+                            scripted_tell_before_peek, scripted_tell_after_peek, ComponentEvaluator
+from utils.abs_metric import scene_similarity
 
 
 def parse_args():
@@ -95,12 +103,21 @@ def main(cfgs):
     run_mode = cfgs.RUN_MODE
 
     if run_mode == 'train':
-        
+        data_bowaddupdate_a = BOWAddUpdateData(cfgs, split='a')
+        data_bowaddupdate_b = BOWAddUpdateData(cfgs, split='b')
         
         # Define model
         # Custom loss is defined within the model itself
-        model_a = None
-        model_b = None
+        model_a = LSTMAddOnlyDrawer(
+            cfgs, datagen=data_bowaddupdate_a, d_embeddings=cfgs.EMBEDDING_DIM,
+            d_hidden=cfgs.HIDDEN_DIM, d_lstm=cfgs.LSTM_DIM, num_lstm_layers=cfgs.LAYER_SIZE,
+            pre_lstm_dropout=cfgs.PRELSTM_DROPOUT, lstm_dropout=cfgs.LSTM_DROPOUT
+        )
+        model_b = LSTMAddOnlyDrawer(
+            cfgs, datagen=data_bowaddupdate_b, d_embeddings=cfgs.EMBEDDING_DIM,
+            d_hidden=cfgs.HIDDEN_DIM, d_lstm=cfgs.LSTM_DIM, num_lstm_layers=cfgs.LAYER_SIZE,
+            pre_lstm_dropout=cfgs.PRELSTM_DROPOUT, lstm_dropout=cfgs.LSTM_DROPOUT
+        )
 
 
         model_a.cuda()
@@ -113,6 +130,7 @@ def main(cfgs):
             model_b = torch.nn.DataParallel(model_b, device_ids=cfgs.DEVICES)
 
         if cfgs.RESUME:
+            pass
             #TODO: define loading func for both model A and B
             # print("Resume training")
             # if cfgs.CKPT_PATH is not None:
@@ -138,20 +156,17 @@ def main(cfgs):
             path = None
 
             optim_a = getattr(torch.optim, cfgs.OPT)
-            optimizer_a = optim(model_a.parameters(), lr=cfgs.LR,
+            optimizer_a = optim_a(model_a.parameters(), lr=cfgs.LR,
                               **cfgs.OPT_PARAMS)
             
             optim_b = getattr(torch.optim, cfgs.OPT)
-            optimizer_b = optim(model_b.parameters(), lr=cfgs.LR,
+            optimizer_b = optim_b(model_b.parameters(), lr=cfgs.LR,
                               **cfgs.OPT_PARAMS)
 
             start_epoch_a = 0
             start_epoch_b = 0
         
         # Dataloader
-        data_bowaddupdate_a = BOWAddUpdateData(cfgs, split='a')
-        data_bowaddupdate_b = BOWAddUpdateData(cfgs, split='b')
-
         dataloader_a = DataLoader(
             data_bowaddupdate_a, batch_size=cfgs.BATCH_SIZE, shuffle=True,
             num_workers=cfgs.NUM_WORKERS, pin_memory=cfgs.PIN_MEM,
@@ -164,12 +179,13 @@ def main(cfgs):
             collate_fn=custom_collate
         )
 
+        print("Training drawer A...")
         # Train drawer A
         for epoch in range(start_epoch_a, cfgs.MAX_EPOCH):
             for step, sample_iter in enumerate(dataloader_a):
                 optimizer_a.zero_grad()
 
-                sample_iter = sample_iter.cuda()
+                sample_iter = {k: v.cuda() for k, v in sample_iter.items()}
                 loss = model_a(sample_iter)
                 loss.backward()
 
@@ -182,16 +198,28 @@ def main(cfgs):
                 optimizer_a.step()
             
             # Evaluate for each epoch
-            #TODO: implement eval for drawer A
-        
-        
+            model_a.eval()
+            print("Done epoch: {} loss: {}".format(epoch, loss.item()))
+            if epoch % 1 == 0:
+                for split in ('a',):
+                    sims = eval_fns(cfgs, make_fns(split, scripted_tell, (model_a, model_b)), limit=100)
+                    print('split: ', split, sims.mean())
 
+                    sims = eval_fns(cfgs, make_fns(split, scripted_tell_before_peek, (model_a, model_b)), limit=100)
+                    print('split: ', split, 'before', sims.mean())
+
+                    sims = eval_fns(cfgs, make_fns(split, scripted_tell_after_peek, (model_a, model_b)), limit=100)
+                    print('split: ', split, 'after', sims.mean())
+
+            model_a.train()   
+        
+        print("Training drawer B...")
         # Train drawer B
         for epoch in range(start_epoch_b, cfgs.MAX_EPOCH):
             for step, sample_iter in enumerate(dataloader_b):
                 optimizer_b.zero_grad()
 
-                sample_iter = sample_iter.cuda()
+                sample_iter = {k: v.cuda() for k, v in sample_iter.items()}
                 loss = model_b(sample_iter)
                 loss.backward()
 
@@ -204,18 +232,30 @@ def main(cfgs):
                 optimizer_b.step()
             
             # Evaluate for each epoch
-            # TODO: implement eval for drawer B
+            model_b.eval()
+            print("Done epoch: {} loss: {}".format(epoch, loss.item()))
+            if epoch % 1 == 0:
+                for split in ('b',):
+                    sims = eval_fns(cfgs, make_fns(split, scripted_tell, (model_a, model_b)), limit=100)
+                    print('split: ', split, sims.mean())
 
+                    sims = eval_fns(cfgs, make_fns(split, scripted_tell_before_peek, (model_a, model_b)), limit=100)
+                    print('split: ', split, 'before', sims.mean())
+
+                    sims = eval_fns(cfgs, make_fns(split, scripted_tell_after_peek, (model_a, model_b)), limit=100)
+                    print('split: ', split, 'after', sims.mean())
+            
+            model_b.train()
 
 
         # Save states
         state_a = {
-            'state_dict': model_a.state_dict(),
+            'specs': model_a.spec,
             'optimizer': optimizer_a.state_dict()
         }
 
         state_b = {
-            'state_dict': model_b.state_dict(),
+            'specs': model_b.spec,
             'optimizer': optimizer_b.state_dict()
         }
 
@@ -227,20 +267,15 @@ def main(cfgs):
         # TODO: Currently does not accommodate saving in the middle of training.
         torch.save(
             model_states,
-            cfgs.CKPTS_PATH + 
-            'ckpt_' + cfgs.CKPT_VERSION + 
-            'epoch' + str(cfgs.MAX_EPOCH) + '.pkl'
+            os.path.join(cfgs.CKPTS_PATH,
+            'ckpt_' + cfgs.VERSION + 
+            '_epoch' + str(cfgs.MAX_EPOCH) + '.pkl')
         )
 
-
-        # include logic if resuming training
-        # also func to select device
-        # set model to train mode
-        # possible gradient accumulation?
-        # can use key: 'dev' or 'test' instead of 'a' or 'b' to access other splits
+    
+    # TODO: the original scripts behave differently for training and testing, as BOWAddUpdateData is not used for testing
+    # the split for testing is obtained by accessing the keys created in data_for_splits()
     elif run_mode == 'val':
-        pass
-        
         # model_a.eval()
         # model_b.eval()
         # data_bowaddupdate_dev = BOWAddUpdateData(cfgs, split='dev')
@@ -248,8 +283,152 @@ def main(cfgs):
 
         # print("len_data_dev", len(data_bowaddupdate_dev))
         # print("len_data_test", len(data_bowaddupdate_test))
+
+        eval_split = 'dev'
+        if cfgs.CKPT_PATH is not None:
+            path = cfgs.CKPT_PATH
+        else:
+            path = os.path.join(
+                cfgs.CKPTS_PATH, 
+                'ckpt_' + cfgs.CKPT_VERSION + 
+                '_epoch' + str(cfgs.CKPT_EPOCH) + '.pkl'
+            )
+
+        # Load model
+        ckpt = torch.load(path)
+
+        data_bowaddupdate_a = BOWAddUpdateData(cfgs, spec=ckpt['drawer_a']['specs']['datagen_spec'])
+        data_bowaddupdate_b = BOWAddUpdateData(cfgs, spec=ckpt['drawer_b']['specs']['datagen_spec'])
+
+        model_a = LSTMAddOnlyDrawer(
+            cfgs, datagen=data_bowaddupdate_a, d_embeddings=cfgs.EMBEDDING_DIM,
+            d_hidden=cfgs.HIDDEN_DIM, d_lstm=cfgs.LSTM_DIM, num_lstm_layers=cfgs.LAYER_SIZE,
+            pre_lstm_dropout=cfgs.PRELSTM_DROPOUT, lstm_dropout=cfgs.LSTM_DROPOUT
+        )
+        model_b = LSTMAddOnlyDrawer(
+            cfgs, datagen=data_bowaddupdate_b, d_embeddings=cfgs.EMBEDDING_DIM,
+            d_hidden=cfgs.HIDDEN_DIM, d_lstm=cfgs.LSTM_DIM, num_lstm_layers=cfgs.LAYER_SIZE,
+            pre_lstm_dropout=cfgs.PRELSTM_DROPOUT, lstm_dropout=cfgs.LSTM_DROPOUT
+        )
+
+        model_a.load_state_dict(ckpt['drawer_a']['specs']['state_dict'])
+        model_b.load_state_dict(ckpt['drawer_b']['specs']['state_dict'])
+
+        model_a.cuda()
+        model_b.cuda()
+        model_a.eval()
+        model_b.eval()
+
+        if cfgs.N_GPU > 1:
+            model_a = torch.nn.DataParallel(model_a, device_ids=cfgs.DEVICES)
+            model_b = torch.nn.DataParallel(model_b, device_ids=cfgs.DEVICES)
+
+        
+        lstm_drawer = (model_a, model_b)
+
+        # Evaluate on dev set
+        with torch.no_grad():
+            print("Evaluating on dev set...")
+            limit = None
+            component_evaluator = ComponentEvaluator.get(cfgs)
+
+            # Human scene similarity
+            human_sims = np.array([
+                scene_similarity(human_scene, true_scene)
+                for true_scene, human_scene in codraw_data.get_truth_and_human_scenes(cfgs, eval_split)
+                ])
+            
+            print("Human scene similarity: mean={:.6f} std={:.6f} median={:.6f}".format(human_sims.mean(), human_sims.std(), np.median(human_sims)))
+            print("")
+
+            # Drawer evaluations against script
+            print("Drawer evaluations against script")
+            print("Drawer           Scene similarity")
+
+            for split in ('a', 'b'):
+                sims = eval_fns(cfgs, make_fns(split, scripted_tell, lstm_drawer), limit=limit, split=eval_split)
+                print("LSTM drawer_{}:\t {}".format(split, sims.mean()))
+
+            print("\n")
+            print("Drawer evaluations against script")
+            print("Drawer            Dir   \t Expr(human)\t Pose(human)\t Depth  \t xy (sq.)\t x-only  \t y-only")
+            for split in ('a', 'b'):
+                components = component_evaluator.eval_fns(make_fns(split, scripted_tell, lstm_drawer), limit=limit, split=eval_split)
+                print("LSTM drawer_" + split, "\t", "\t".join(f"{num: .6f}" for num in components))
+
     elif run_mode == 'test':
-        pass
+        eval_split = 'test'
+        if cfgs.CKPT_PATH is not None:
+            path = cfgs.CKPT_PATH
+        else:
+            path = os.path.join(
+                cfgs.CKPTS_PATH, 
+                'ckpt_' + cfgs.CKPT_VERSION + 
+                '_epoch' + str(cfgs.CKPT_EPOCH) + '.pkl'
+            )
+
+        # Load model
+        ckpt = torch.load(path)
+
+        data_bowaddupdate_a = BOWAddUpdateData(cfgs, spec=ckpt['drawer_a']['specs']['datagen_spec'])
+        data_bowaddupdate_b = BOWAddUpdateData(cfgs, spec=ckpt['drawer_b']['specs']['datagen_spec'])
+
+        model_a = LSTMAddOnlyDrawer(
+            cfgs, datagen=data_bowaddupdate_a, d_embeddings=cfgs.EMBEDDING_DIM,
+            d_hidden=cfgs.HIDDEN_DIM, d_lstm=cfgs.LSTM_DIM, num_lstm_layers=cfgs.LAYER_SIZE,
+            pre_lstm_dropout=cfgs.PRELSTM_DROPOUT, lstm_dropout=cfgs.LSTM_DROPOUT
+        )
+        model_b = LSTMAddOnlyDrawer(
+            cfgs, datagen=data_bowaddupdate_b, d_embeddings=cfgs.EMBEDDING_DIM,
+            d_hidden=cfgs.HIDDEN_DIM, d_lstm=cfgs.LSTM_DIM, num_lstm_layers=cfgs.LAYER_SIZE,
+            pre_lstm_dropout=cfgs.PRELSTM_DROPOUT, lstm_dropout=cfgs.LSTM_DROPOUT
+        )
+
+        model_a.load_state_dict(ckpt['drawer_a']['specs']['state_dict'])
+        model_b.load_state_dict(ckpt['drawer_b']['specs']['state_dict'])
+
+        model_a.cuda()
+        model_b.cuda()
+        model_a.eval()
+        model_b.eval()
+
+        if cfgs.N_GPU > 1:
+            model_a = torch.nn.DataParallel(model_a, device_ids=cfgs.DEVICES)
+            model_b = torch.nn.DataParallel(model_b, device_ids=cfgs.DEVICES)
+
+        lstm_drawer = (model_a, model_b)
+
+        # Evaluate on test set
+        with torch.no_grad():
+            print("Evaluating on test set...")
+            limit = None
+            component_evaluator = ComponentEvaluator.get(cfgs)
+
+            # Human scene similarity
+            human_sims = np.array([
+                scene_similarity(human_scene, true_scene)
+                for true_scene, human_scene in codraw_data.get_truth_and_human_scenes(cfgs, eval_split)
+                ])
+            
+            print("Human scene similarity: mean={:.6f} std={:.6f} median={:.6f}".format(human_sims.mean(), human_sims.std(), np.median(human_sims)))
+            print("")
+
+            # Drawer evaluations against script
+            # eval_automatic.py use split 'b' for drawer officially.
+            print("Drawer evaluations against script")
+            print("Drawer           Scene similarity")
+
+            for split in ('a', 'b'):
+                sims = eval_fns(cfgs, make_fns(split, scripted_tell, lstm_drawer), limit=limit, split=eval_split)
+                print("LSTM drawer_{}:\t {}".format(split, sims.mean()))
+            
+            print("\n")
+            print("Drawer evaluations against script")
+            print("Drawer            Dir   \t Expr(human)\t Pose(human)\t Depth  \t xy (sq.)\t x-only  \t y-only")
+            for split in ('a', 'b'):
+                components = component_evaluator.eval_fns(make_fns(split, scripted_tell, lstm_drawer), limit=limit, split=eval_split)
+                print("LSTM drawer_" + split, "\t", "\t".join(f"{num: .6f}" for num in components))
+
     else:
         exit(-1)
 
